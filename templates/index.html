@@ -1,0 +1,431 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Video Chat Room</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #fff;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .online-count {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 255, 128, 0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+        }
+        .join-section {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        input, button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 25px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 16px;
+        }
+        button {
+            background: #00ff80;
+            color: #000;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: scale(1.05);
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            justify-content: center;
+        }
+        .control-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            padding: 15px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .control-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        .control-btn.active {
+            background: #ff3366;
+        }
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .video-container {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s;
+        }
+        .video-container:hover {
+            transform: translateY(-5px);
+        }
+        video {
+            width: 100%;
+            height: 240px;
+            object-fit: cover;
+            display: block;
+            border-radius: 12px 12px 0 0;
+            transform: scaleX(-1);
+        }
+        .video-info {
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.8);
+        }
+        .username {
+            margin: 0;
+            font-size: 16px;
+            font-weight: bold;
+            padding: 5px 0;
+        }
+        .mute-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #ff3366;
+            font-size: 20px;
+            display: none;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px;
+            border-radius: 50%;
+        }
+        .speaking {
+            box-shadow: 0 0 20px #00ff80, 0 0 40px #00ff80;
+        }
+        @media (max-width: 768px) {
+            .video-grid {
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            }
+            .join-section {
+                flex-direction: column;
+            }
+        }
+        @media (max-width: 480px) {
+            .video-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="online-count">
+                <i class="fas fa-users"></i>
+                <span id="userCount">0</span>
+            </div>
+            <div class="join-section">
+                <input type="text" id="username" placeholder="Your username">
+                <button onclick="joinRoom()">Join Room</button>
+            </div>
+        </div>
+        <div class="controls">
+            <button class="control-btn" id="muteBtn" title="Mute/Unmute">
+                <i class="fas fa-microphone"></i>
+            </button>
+            <button class="control-btn" id="videoBtn" title="Video On/Off">
+                <i class="fas fa-video"></i>
+            </button>
+            <button class="control-btn" id="switchCamBtn" title="Switch Camera">
+                <i class="fas fa-camera-rotate"></i>
+            </button>
+        </div>
+        <div class="video-grid" id="videos">
+            <div class="video-container" id="local">
+                <video id="localVideo" autoplay playsinline muted></video>
+                <div class="video-info">
+                    <p class="username" id="localUsername"></p>
+                </div>
+                <i class="fas fa-microphone-slash mute-indicator" id="localMute"></i>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let localStream;
+        const peers = {};
+        const videoGrid = document.getElementById('videos');
+        let users = {};
+        let currentFacingMode = 'user';
+        let audioContext, analyser;
+
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { 
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
+            ]
+        };
+
+        async function getMedia() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 },
+                        frameRate: { ideal: 30 }
+                    },
+                    audio: true
+                });
+                document.getElementById('localVideo').srcObject = localStream;
+                console.log('Local stream obtained:', localStream.getTracks());
+                setupAudioDetection();
+            } catch (e) {
+                console.error('Error accessing media:', e);
+            }
+        }
+
+        function setupAudioDetection() {
+            audioContext = new AudioContext();
+            analyser = audioContext.createAnalyser();
+            const source = audioContext.createMediaStreamSource(localStream);
+            source.connect(analyser);
+            analyser.fftSize = 256;
+            
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            function detectSpeaking() {
+                analyser.getByteFrequencyData(dataArray);
+                const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                const container = document.getElementById('local');
+                if (container) {
+                    container.classList.toggle('speaking', average > 20);
+                }
+                requestAnimationFrame(detectSpeaking);
+            }
+            detectSpeaking();
+        }
+
+        function createPeerConnection(peerId) {
+            console.log('Creating peer connection for:', peerId);
+            const peer = new RTCPeerConnection(configuration);
+            
+            localStream.getTracks().forEach(track => {
+                peer.addTrack(track, localStream);
+                console.log(`Added ${track.kind} track to peer ${peerId}`);
+            });
+
+            peer.ontrack = (event) => {
+                console.log('Received remote stream from:', peerId);
+                const [remoteStream] = event.streams;
+                addVideoStream(remoteStream, peerId);
+            };
+
+            peer.onicecandidate = (event) => {
+                if (event.candidate) {
+                    console.log('Sending ICE candidate to:', peerId);
+                    socket.emit('signal', {
+                        to: peerId,
+                        from: socket.id,
+                        signal: { candidate: event.candidate }
+                    });
+                }
+            };
+
+            peer.onconnectionstatechange = () => {
+                console.log(`Peer ${peerId} connection state: ${peer.connectionState}`);
+                if (peer.connectionState === 'connected') {
+                    adjustVideoQuality(peer);
+                }
+            };
+
+            peers[peerId] = peer;
+            return peer;
+        }
+
+        function addVideoStream(stream, peerId) {
+            if (document.getElementById(peerId)) return;
+            
+            console.log('Adding video stream for:', peerId);
+            const container = document.createElement('div');
+            container.className = 'video-container';
+            container.id = peerId;
+
+            const video = document.createElement('video');
+            video.srcObject = stream;
+            video.autoplay = true;
+            video.playsinline = true;
+
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'video-info';
+
+            const usernameP = document.createElement('p');
+            usernameP.className = 'username';
+            usernameP.textContent = users[peerId] || 'Unknown';
+
+            const muteIcon = document.createElement('i');
+            muteIcon.className = 'fas fa-microphone-slash mute-indicator';
+
+            infoDiv.appendChild(usernameP);
+            container.appendChild(video);
+            container.appendChild(infoDiv);
+            container.appendChild(muteIcon);
+            videoGrid.appendChild(container);
+        }
+
+        async function adjustVideoQuality(peer) {
+            const sender = peer.getSenders().find(s => s.track.kind === 'video');
+            if (!sender) return;
+
+            const parameters = sender.getParameters();
+            parameters.encodings[0].maxBitrate = 1000000;
+            await sender.setParameters(parameters);
+        }
+
+        async function joinRoom() {
+            const username = document.getElementById('username').value;
+            if (!username) return;
+
+            await getMedia();
+            socket.emit('join', { username });
+            document.getElementById('localUsername').textContent = username;
+        }
+
+        socket.on('user_joined', async (data) => {
+            users = data.users;
+            document.getElementById('userCount').textContent = Object.keys(users).length;
+            console.log('User joined:', data.sid, 'Users:', users);
+            if (data.sid !== socket.id) {
+                const peer = createPeerConnection(data.sid);
+                const offer = await peer.createOffer();
+                await peer.setLocalDescription(offer);
+                socket.emit('signal', {
+                    to: data.sid,
+                    from: socket.id,
+                    signal: offer
+                });
+                console.log('Sent offer to:', data.sid);
+            }
+        });
+
+        socket.on('signal', async (data) => {
+            if (data.from === socket.id) return;
+
+            console.log('Received signal from:', data.from, 'Type:', data.signal.type);
+            if (!peers[data.from]) {
+                peers[data.from] = createPeerConnection(data.from);
+            }
+
+            const peer = peers[data.from];
+            
+            try {
+                if (data.signal.type === 'offer') {
+                    await peer.setRemoteDescription(data.signal);
+                    const answer = await peer.createAnswer();
+                    await peer.setLocalDescription(answer);
+                    socket.emit('signal', {
+                        to: data.from,
+                        from: socket.id,
+                        signal: answer
+                    });
+                    console.log('Sent answer to:', data.from);
+                } else if (data.signal.type === 'answer') {
+                    await peer.setRemoteDescription(data.signal);
+                    console.log('Set remote description for answer from:', data.from);
+                } else if (data.signal.candidate) {
+                    await peer.addIceCandidate(data.signal.candidate);
+                    console.log('Added ICE candidate from:', data.from);
+                }
+            } catch (e) {
+                console.error('Error handling signal:', e);
+            }
+        });
+
+        socket.on('user_left', (data) => {
+            console.log('User left:', data.sid);
+            if (peers[data.sid]) {
+                peers[data.sid].close();
+                delete peers[data.sid];
+                document.getElementById(data.sid)?.remove();
+            }
+            delete users[data.sid];
+            document.getElementById('userCount').textContent = Object.keys(users).length;
+        });
+
+        const muteBtn = document.getElementById('muteBtn');
+        const videoBtn = document.getElementById('videoBtn');
+        const switchCamBtn = document.getElementById('switchCamBtn');
+
+        muteBtn.onclick = () => {
+            const muted = !localStream.getAudioTracks()[0].enabled;
+            localStream.getAudioTracks()[0].enabled = muted;
+            muteBtn.classList.toggle('active', !muted);
+            document.getElementById('localMute').style.display = muted ? 'none' : 'block';
+            socket.emit('toggle_audio', { muted: !muted });
+        };
+
+        videoBtn.onclick = () => {
+            const enabled = !localStream.getVideoTracks()[0].enabled;
+            localStream.getVideoTracks()[0].enabled = enabled;
+            videoBtn.classList.toggle('active', !enabled);
+            socket.emit('toggle_video', { enabled });
+        };
+
+        switchCamBtn.onclick = async () => {
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            localStream.getTracks().forEach(track => track.stop());
+            await getMedia();
+            Object.values(peers).forEach(peer => {
+                localStream.getTracks().forEach(track => {
+                    const sender = peer.getSenders().find(s => s.track.kind === track.kind);
+                    if (sender) sender.replaceTrack(track);
+                });
+            });
+        };
+
+        socket.on('audio_toggled', (data) => {
+            const container = document.getElementById(data.sid);
+            if (container) {
+                container.querySelector('.mute-indicator').style.display = 
+                    data.muted ? 'block' : 'none';
+            }
+        });
+
+        socket.on('video_toggled', (data) => {
+            const video = document.getElementById(data.sid)?.querySelector('video');
+            if (video) video.style.opacity = data.enabled ? '1' : '0.5';
+        });
+    </script>
+</body>
+</html>
